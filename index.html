@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Orders App</title>
+
+  <!-- PWA manifest -->
+  <link rel="manifest" href="manifest.json">
+
+  <!-- Theme color for mobile -->
+  <meta name="theme-color" content="#0000ff">
+
+  <!-- Main JS -->
+  <script src="main.js" defer></script>
+</head>
+<body>
+
+<h1>Welcome to My Orders App</h1>
+<p>This is a PWA ready website. Install it on your mobile to get push notifications.</p>
+
+<!-- Test notification button -->
+<button id="testNotif">Test Notification</button>
+
+<script>
+document.getElementById('testNotif').addEventListener('click', () => {
+  if ('serviceWorker' in navigator && 'PushManager' in window) {
+    navigator.serviceWorker.ready.then(registration => {
+      registration.showNotification('Test Order!', {
+        body: 'This is a test notification.',
+        icon: 'icon-192.png'
+      });
+    });
+  } else {
+    alert('Notification test');
+  }
+});
+</script>
+
+</body>
+</html>
