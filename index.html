@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>I'm hungry | Admin Panel</title>
+    
+    <!-- External Libraries -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@300;400;600;700&display=swap');
+        body { font-family: 'Hind Siliguri', sans-serif; background-color: #f8f9fa; scroll-behavior: smooth; -webkit-tap-highlight-color: transparent; }
+        .hidden-section { display: none; content-visibility: hidden; }
+        .sidebar-active { border-left: 4px solid #ef4444; background: #fee2e2; color: #b91c1c; }
+        
+        .switch { position: relative; display: inline-block; width: 60px; height: 34px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #ef4444; }
+        input:checked + .slider:before { transform: translateX(26px); }
+        
+        #map, #picker-map { height: 600px; width: 100%; border-radius: 1.5rem; z-index: 1; border: 4px solid white; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        #picker-map { height: 400px; }
+        .order-filter-active { background-color: #ef4444 !important; color: white !important; }
+        .order-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: #ef4444; }
+        .rider-icon-div { border: 2px solid white; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; box-shadow: 0 0 10px rgba(0,0,0,0.2); width: 34px !important; height: 34px !important; transition: all 0.3s; }
+
+        #in-app-notif {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-150%);
+            width: calc(100% - 30px);
+            max-width: 400px;
+            background: white;
+            border: 2px solid #ef4444;
+            border-radius: 25px;
+            padding: 12px 18px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 9999;
+            box-shadow: 0 10px 25px rgba(239, 68, 68, 0.15);
+            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            cursor: pointer;
+        }
+        #in-app-notif.show { transform: translateX(-50%) translateY(0); }
+        .notif-icon { width: 40px; height: 40px; background: #fee2e2; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #ef4444; flex-shrink: 0; }
+
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .pulse-alert { animation: pulse-red 2s infinite; border: 2px solid #ef4444; }
+
+        #conn-status { position: fixed; bottom: 10px; right: 10px; z-index: 9999; display: flex; align-items: center; gap: 8px; background: white; padding: 4px 12px; border-radius: 20px; border: 1px solid #ddd; font-size: 10px; font-weight: bold; }
+        .online-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+        .offline-dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; animation: pulse-red 1s infinite; }
+    </style>
+</head>
+<body onclick="unlockAudio()">
+
+    <!-- Connection Indicator -->
+    <div id="conn-status">
+        <div id="conn-dot" class="online-dot"></div>
+        <span id="conn-text">Connected</span>
+        <span id="admin-ip" class="text-gray-400 ml-1"></span>
+    </div>
+
+    <!-- Rider App Style Notification Bar -->
+    <div id="in-app-notif" onclick="closeNotification()">
+        <div class="notif-icon">
+            <i class="fas fa-shopping-cart text-lg"></i>
+        </div>
+        <div class="flex-1 overflow-hidden">
+            <p class="text-[11px] font-bold text-red-600 leading-tight">সিস্টেমে নতুন অর্ডার এসেছে</p>
+            <p id="notif-text" class="text-sm font-black text-gray-800 truncate">লোড হচ্ছে...</p>
+        </div>
+    </div>
+
+    <!-- Audio Element -->
+    <audio id="order-sound" preload="auto" loop>
+        <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">
+    </audio>
+
+    <!-- AUTOMATIC ALARM OVERLAY -->
+    <div id="alarm-overlay" class="hidden fixed top-0 left-0 w-full bg-red-600 text-white p-4 z-[2000] flex justify-between items-center shadow-lg">
+        <div class="flex items-center gap-3">
+            <i class="fas fa-bell text-2xl animate-bounce"></i>
+            <div>
+                <p class="font-bold text-lg">New Order Received!</p>
+                <p class="text-xs">(সাউন্ড বন্ধ করতে বাটন চাপুন)</p>
+            </div>
+        </div>
+        <button onclick="stopAlarm()" class="bg-white text-red-600 px-8 py-3 rounded-full font-black text-sm uppercase tracking-wider shadow-xl active:scale-95 transition">Stop Alarm</button>
+    </div>
+
+    <!-- Map Picker Modal -->
+    <div id="map-picker-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-[300] flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl">
+            <div class="p-5 border-b flex justify-between items-center bg-gray-800 text-white">
+                <h3 class="text-xl font-black">Set Restaurant Location</h3>
+                <button onclick="closeMapPicker()" class="text-white text-2xl font-bold">&times;</button>
+            </div>
+            <div id="picker-map"></div>
+            <div class="p-4 flex gap-4 bg-white">
+                <button onclick="savePickedLocation()" class="bg-red-600 text-white flex-1 py-3 rounded-xl font-bold shadow-lg">Save Coordinates</button>
+                <button onclick="closeMapPicker()" class="bg-gray-200 text-gray-800 px-6 py-3 rounded-xl font-bold">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Detail Modal -->
+    <div id="order-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-[250] flex items-center justify-center p-4">
+        <div class="bg-white rounded-[2.5rem] w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            <div class="p-5 border-b flex justify-between items-center bg-red-600 text-white">
+                <div class="flex items-center gap-3">
+                   <i class="fas fa-receipt text-xl"></i>
+                   <h3 class="text-xl font-black italic uppercase tracking-tight">Order Details</h3>
+                </div>
+                <button onclick="closeOrderModal()" class="text-white hover:text-gray-200 text-2xl font-bold">&times;</button>
+            </div>
+            <div id="order-details-content" class="p-6 overflow-y-auto bg-white grow"></div>
+            <div class="p-4 bg-white text-center">
+                <button onclick="closeOrderModal()" class="bg-[#1e293b] text-white w-[90%] py-4 rounded-3xl font-black hover:bg-black shadow-xl text-lg tracking-wide active:scale-95 transition mx-auto block mb-2">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Customer Detail Modal -->
+    <div id="customer-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-[300] flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            <div class="p-5 border-b flex justify-between items-center bg-blue-600 text-white">
+                <h3 class="text-xl font-black"><i class="fas fa-user-circle mr-2"></i>Customer Profile</h3>
+                <button onclick="closeCustomerModal()" class="text-white hover:text-gray-200 text-2xl font-bold">&times;</button>
+            </div>
+            <div id="customer-details-content" class="p-6 overflow-y-auto bg-gray-50 grow"></div>
+            <div class="p-4 border-t bg-white text-center">
+                <button onclick="closeCustomerModal()" class="bg-gray-800 text-white w-full py-3 rounded-xl font-bold hover:bg-gray-900 shadow-lg text-lg">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rider Detail Modal -->
+    <div id="rider-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-[300] flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            <div class="p-5 border-b flex justify-between items-center bg-purple-600 text-white">
+                <h3 class="text-xl font-black"><i class="fas fa-motorcycle mr-2"></i>Rider Profile</h3>
+                <button onclick="closeRiderModal()" class="text-white hover:text-gray-200 text-2xl font-bold">&times;</button>
+            </div>
+            <div id="rider-details-content" class="p-6 overflow-y-auto bg-gray-50 grow"></div>
+            <div class="p-4 border-t bg-white text-center">
+                <button onclick="closeRiderModal()" class="bg-gray-800 text-white w-full py-3 rounded-xl font-bold hover:bg-gray-900 shadow-lg text-lg">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LOGIN SCREEN -->
+    <div id="login-screen" class="fixed inset-0 bg-gray-900 flex items-center justify-center z-[5000] px-4">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border-t-8 border-red-600">
+            <h2 class="text-3xl font-bold text-center text-red-600 mb-2">Admin Login</h2>
+            <input type="email" id="admin-email" placeholder="Email" class="w-full p-4 mb-4 border rounded-xl outline-none focus:ring-2 focus:ring-red-500">
+            <input type="password" id="admin-pass" placeholder="Password" class="w-full p-4 mb-4 border rounded-xl outline-none focus:ring-2 focus:ring-red-500">
+            <button onclick="adminLogin()" class="w-full bg-red-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-red-700">Login</button>
+        </div>
+    </div>
+
+    <div id="main-content" class="hidden min-h-screen flex flex-col md:flex-row">
+        <!-- Sidebar -->
+        <div class="w-full md:w-64 bg-white shadow-md z-10 flex-shrink-0 flex flex-col justify-between">
+            <div>
+                <div class="p-6 border-b"><h1 class="text-2xl font-black text-red-600 italic">KHIDE LAGCHE</h1></div>
+                <nav class="mt-4">
+                    <button onclick="showSection('dashboard')" id="btn-dashboard" class="nav-btn w-full text-left px-6 py-3 flex items-center gap-3 sidebar-active"><i class="fas fa-chart-line"></i> Dashboard</button>
+                    <button onclick="showSection('orders')" id="btn-orders" class="nav-btn w-full text-left px-6 py-3 flex items-center gap-3 text-gray-700 relative">
+                        <i class="fas fa-shopping-bag"></i> Orders
+                        <span id="order-badge" class="hidden absolute right-4 bg-red-600 text-white text-[10px] px-2 py-0.5 rounded-full">!</span>
+                    </button>
+                    <button onclick="showSection('map')" id="btn-map" class="nav-btn w-full text-left px-6 py-3 flex items-center gap-3 text-gray-700"><i class="fas fa-map-location-dot"></i> Live Map</button>
+                    <button onclick="showSection('marketing')" id="btn-marketing" class="nav-btn w-full text-left px-6 py-3 flex items-center gap-3 text-gray-700"><i class="fas fa-bullhorn"></i> Advertising</button>
+                    <button onclick="showSection('restaurants')" id="btn-restaurants" class="nav-btn w-full text-left px-6 py-3 flex items-center gap-3 text-gray-700"><i class="fas fa-utensils"></i> Restaurants</button>
+                    <button onclick="showSection('riders')" id="btn-riders" class="nav-btn w-full text-left px-6 py-3 flex items-center gap-3 text-gray-700"><i class="fas fa-motorcycle"></i> Riders</button>
+                    <button onclick="showSection('customers')" id="btn-customers" class="nav-btn w-full text-left px-6 py-3 flex items-center gap-3 text-gray-700"><i class="fas fa-users"></i> Customers</button>
+                    <button onclick="showSection('app-control')" id="btn-app-control" class="nav-btn w-full text-left px-6 py-3 flex items-center gap-3 text-gray-700"><i class="fas fa-sliders"></i> App Control</button>
+                </nav>
+            </div>
+            <div class="border-t mb-4">
+                <button onclick="requestPushPermission()" class="w-full text-left px-6 py-3 flex items-center gap-3 text-green-600 font-bold hover:bg-green-50"><i class="fas fa-bell"></i> Enable Phone Notifications</button>
+                <div class="px-6 py-3 flex items-center justify-between text-gray-700 border-b border-gray-100">
+                    <span class="text-sm font-bold"><i class="fas fa-volume-up mr-2 text-red-500"></i> Sound Alert</span>
+                    <label class="switch scale-[0.6] origin-right">
+                        <input type="checkbox" id="sound-toggle" checked onchange="toggleSoundMaster(this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <button onclick="window.location.reload()" class="w-full text-left px-6 py-3 flex items-center gap-3 text-blue-600 font-bold hover:bg-blue-50"><i class="fas fa-sync-alt"></i> Refresh Panel</button>
+                <button onclick="logout()" class="w-full text-left px-6 py-3 flex items-center gap-3 text-red-500 font-bold hover:bg-red-50"><i class="fas fa-sign-out-alt"></i> Logout</button>
+            </div>
+        </div>
+
+        <main class="flex-1 p-4 md:p-8 overflow-y-auto">
+            
+            <!-- Dashboard -->
+            <section id="sec-dashboard">
+                <h2 class="text-2xl font-black mb-6">Admin Overview</h2>
+                <div id="inside-alert-box" class="hidden mb-8 p-6 bg-red-50 border-2 border-red-200 rounded-[2.5rem] pulse-alert flex items-center justify-between">
+                    <div class="flex items-center gap-5">
+                        <div class="w-16 h-16 bg-red-600 text-white rounded-full flex items-center justify-center text-2xl shadow-lg">
+                            <i class="fas fa-exclamation-triangle animate-pulse"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-black text-red-600">পেন্ডিং অর্ডার আছে!</h3>
+                            <p class="text-gray-500 font-bold text-sm">নতুন অর্ডার রিসিভ হয়েছে, দ্রুত অ্যাকশন নিন।</p>
+                        </div>
+                    </div>
+                    <button onclick="showSection('orders')" class="bg-red-600 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl">অর্ডার দেখুন</button>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                    <div class="bg-white p-6 rounded-3xl shadow-sm border-b-4 border-blue-500"><p class="text-gray-400 text-[10px] font-black uppercase">Total Revenue</p><p class="text-2xl font-black text-gray-800" id="stat-revenue">৳ 0</p></div>
+                    <div class="bg-white p-6 rounded-3xl shadow-sm border-b-4 border-green-500"><p class="text-gray-400 text-[10px] font-black uppercase">Today's Income</p><p class="text-2xl font-black text-green-600" id="stat-today-revenue">৳ 0</p></div>
+                    <div class="bg-white p-6 rounded-3xl shadow-sm border-b-4 border-orange-500"><p class="text-gray-400 text-[10px] font-black uppercase">Total Orders</p><p class="text-2xl font-black text-gray-800" id="stat-orders">0</p></div>
+                    <div class="bg-white p-6 rounded-3xl shadow-sm border-b-4 border-purple-500"><p class="text-gray-400 text-[10px] font-black uppercase">Active Riders</p><p class="text-2xl font-black text-gray-800" id="stat-active-riders">0</p></div>
+                </div>
+            </section>
+
+            <!-- Orders -->
+            <section id="sec-orders" class="hidden-section">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+                    <h2 class="text-2xl font-black">Order Management</h2>
+                    <div class="flex items-center gap-2 bg-gray-200 p-1 rounded-xl">
+                        <button onclick="filterOrders('ALL', this)" class="order-filter-btn px-4 py-1.5 rounded-lg text-xs font-bold order-filter-active">All</button>
+                        <button onclick="filterOrders('PENDING', this)" class="order-filter-btn px-4 py-1.5 rounded-lg text-xs font-bold">Pending</button>
+                        <button onclick="filterOrders('ASSIGNED', this)" class="order-filter-btn px-4 py-1.5 rounded-lg text-xs font-bold">Assigned</button>
+                    </div>
+                </div>
+                <div class="bg-white rounded-2xl shadow-sm overflow-x-auto border">
+                    <table class="w-full text-left">
+                        <thead class="bg-gray-50 border-b">
+                            <tr>
+                                <th class="p-4 w-10"><input type="checkbox" id="select-all-orders" onchange="toggleSelectAll(this.checked)" class="order-checkbox"></th>
+                                <th class="p-4 text-[10px] font-black uppercase">Code</th>
+                                <th class="p-4 text-[10px] font-black uppercase">Distance</th>
+                                <th class="p-4 text-[10px] font-black uppercase">Status</th>
+                                <th class="p-4 text-[10px] font-black uppercase text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orders-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Riders Section -->
+            <section id="sec-riders" class="hidden-section">
+                <h2 class="text-2xl font-black mb-6">Rider Management</h2>
+                <div class="bg-white rounded-2xl shadow-sm overflow-x-auto border">
+                    <table class="w-full text-left">
+                        <thead class="bg-gray-50 border-b">
+                            <tr>
+                                <th class="p-4 text-[10px] font-black uppercase">Name</th>
+                                <th class="p-4 text-[10px] font-black uppercase">Phone</th>
+                                <th class="p-4 text-[10px] font-black uppercase">Availability</th>
+                                <th class="p-4 text-[10px] font-black uppercase text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="riders-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Customers Section -->
+            <section id="sec-customers" class="hidden-section">
+                <h2 class="text-2xl font-black mb-6">Customer Management</h2>
+                <div class="bg-white rounded-2xl shadow-sm overflow-x-auto border">
+                    <table class="w-full text-left">
+                        <thead class="bg-gray-50 border-b">
+                            <tr>
+                                <th class="p-4 text-[10px] font-black uppercase">Name</th>
+                                <th class="p-4 text-[10px] font-black uppercase">Phone</th>
+                                <th class="p-4 text-[10px] font-black uppercase">Status</th>
+                                <th class="p-4 text-[10px] font-black uppercase text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="customers-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Restaurants -->
+            <section id="sec-restaurants" class="hidden-section">
+                <h2 class="text-2xl font-black mb-6">Restaurants</h2>
+                <div id="restaurant-list-container" class="bg-white rounded-2xl shadow-sm border overflow-hidden p-2"></div>
+            </section>
+
+            <!-- Advertising Notice -->
+            <section id="sec-marketing" class="hidden-section">
+                <h2 class="text-2xl font-black mb-6">Advertising & Alerts</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-white p-6 rounded-3xl shadow-sm border">
+                        <label class="text-[10px] font-black text-gray-400 uppercase mb-2 block">App Notice Sentence</label>
+                        <input type="text" id="input-notice-text" placeholder="e.g. No VAT, No Tax!" class="w-full p-4 bg-gray-50 border rounded-xl mb-4 font-bold outline-none">
+                        <button onclick="saveAppSetting('noticeText', document.getElementById('input-notice-text').value)" class="bg-red-600 text-white w-full py-3 rounded-xl font-bold shadow-lg">Save & Publish Notice</button>
+                    </div>
+                    <div class="bg-white p-6 rounded-3xl shadow-sm border">
+                        <label class="text-[10px] font-black text-gray-400 uppercase mb-2 block">Quick SMS Broadcast (Fetch API)</label>
+                        <input type="text" id="sms-phone" placeholder="Phone Number" class="w-full p-3 bg-gray-50 border rounded-xl mb-2 text-sm">
+                        <textarea id="sms-msg" placeholder="Message content..." class="w-full p-3 bg-gray-50 border rounded-xl mb-3 text-sm h-20"></textarea>
+                        <button onclick="sendQuickSMS()" class="bg-gray-800 text-white w-full py-3 rounded-xl font-bold text-sm">Send via Gateway</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- App Control -->
+            <section id="sec-app-control" class="hidden-section">
+                <h2 class="text-2xl font-black mb-6">System Controls</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="bg-white p-6 rounded-3xl shadow-sm border border-red-100">
+                        <h3 class="font-black text-gray-800 mb-2">Admin Base Fee (৳)</h3>
+                        <input type="number" id="input-admin-fee" class="w-full p-3 bg-gray-50 border rounded-xl mb-4 font-black">
+                        <button onclick="saveAppSetting('adminDeliveryFee', document.getElementById('input-admin-fee').value)" class="bg-red-600 text-white w-full py-3 rounded-xl font-bold">Update</button>
+                    </div>
+                    <div class="bg-white p-6 rounded-3xl shadow-sm border border-blue-100">
+                        <h3 class="font-black text-gray-800 mb-2">Distance Fee (৳ / KM)</h3>
+                        <input type="number" id="input-per-km-fee" class="w-full p-3 bg-gray-50 border rounded-xl mb-4 font-black">
+                        <button onclick="saveAppSetting('perKmFee', document.getElementById('input-per-km-fee').value)" class="bg-blue-600 text-white w-full py-3 rounded-xl font-bold">Update</button>
+                    </div>
+                    <div class="bg-white p-6 rounded-3xl border border-green-100">
+                        <h3 class="font-black text-gray-800 mb-4">Auto Assigned (AI)</h3>
+                        <label class="switch"><input type="checkbox" id="auto-assign-switch" onchange="saveAppSetting('isAutoAssign', this.checked)"><span class="slider"></span></label>
+                        <p class="text-[10px] text-gray-400 font-bold mt-2 italic">* Automatically gives new orders to the nearest rider.</p>
+                    </div>
+                    <!-- NEW: Rider Prioritization Feature -->
+                    <div class="bg-white p-6 rounded-3xl border border-yellow-100">
+                        <h3 class="font-black text-gray-800 mb-4">Rider Prioritization</h3>
+                        <label class="switch"><input type="checkbox" id="prioritization-switch" onchange="saveAppSetting('isPrioritizationEnabled', this.checked)"><span class="slider"></span></label>
+                        <p class="text-[10px] text-gray-400 font-bold mt-2 italic">* Prioritize riders based on distance and workload balance.</p>
+                    </div>
+                    <div class="bg-white p-6 rounded-3xl border">
+                        <h3 class="font-black text-gray-800 mb-4">Store Status</h3>
+                        <label class="switch"><input type="checkbox" id="master-switch" onchange="toggleAppStatus(this.checked)"><span class="slider"></span></label>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Map -->
+            <section id="sec-map" class="hidden-section">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-black">Live Rider Tracking</h2>
+                    <button onclick="focusAllRiders()" class="bg-gray-800 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg"><i class="fas fa-expand-arrows-alt mr-2"></i>Focus All Riders</button>
+                </div>
+                <div id="map"></div>
+            </section>
+        </main>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // --- FIREBASE CONFIG ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyD_TytbX1kd4SKQ5uHZfd5XVGwdw0gzUOE",
+            authDomain: "feeling-hungry-102a9.firebaseapp.com",
+            databaseURL: "https://feeling-hungry-102a9-default-rtdb.firebaseio.com",
+            projectId: "feeling-hungry-102a9",
+            storageBucket: "feeling-hungry-102a9.firebasestorage.app",
+            messagingSenderId: "736201265500",
+            appId: "1:736201265500:web:7b7064b314247c02ad7199"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.database();
+        const messaging = firebase.messaging();
+        
+        auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+
+        let rawRiderData = {}, riderList = {}, allOrders = {}, allCustomers = {}, currentOrderFilter = "ALL";
+        let restaurantsData = {}, pickerMap, pickerMarker, currentResId = null;
+        let globalAdminFee = 0, globalPerKmFee = 0, isAutoAssign = false, isPrioritizationEnabled = false;
+        let mainMap = null, riderMarkers = {}, initialOrderLoad = true;
+        let alarmStoppedManually = false;
+        let isAudioUnlocked = false;
+        let previousPendingCount = 0;
+        let isDataInitialised = false;
+
+        async function fetchAdminMetadata() {
+            try {
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                document.getElementById('admin-ip').innerText = `| ${data.ip} (${data.city})`;
+            } catch (error) { console.error("Fetch API error:", error); }
+        }
+
+        async function sendQuickSMS() {
+            const phone = document.getElementById('sms-phone').value;
+            const msg = document.getElementById('sms-msg').value;
+            if(!phone || !msg) return alert("Fill all fields");
+            try {
+                const response = await fetch('https://jsonplaceholder.typicode.com/posts', {
+                    method: 'POST',
+                    body: JSON.stringify({ to: phone, message: msg }),
+                    headers: { 'Content-type': 'application/json; charset=UTF-8' }
+                });
+                if(response.ok) {
+                    alert("SMS Sent Successfully (Simulated)!");
+                    document.getElementById('sms-phone').value = "";
+                    document.getElementById('sms-msg').value = "";
+                }
+            } catch (e) { alert("Network Error!"); }
+        }
+
+        function requestPushPermission() {
+            if (!("Notification" in window)) { alert("This browser does not support notifications"); return; }
+            Notification.requestPermission().then(permission => {
+                if (permission === "granted") {
+                    navigator.serviceWorker.register('firebase-messaging-sw.js').then((registration) => {
+                        messaging.useServiceWorker(registration);
+                        messaging.getToken({ vapidKey: 'YOUR_PUBLIC_VAPID_KEY_HERE' }).then((currentToken) => {
+                            if (currentToken) { db.ref(`admin_tokens/${auth.currentUser.uid}`).set(currentToken); alert("Enabled!"); }
+                        });
+                    });
+                }
+            });
+        }
+
+        function monitorConnection() {
+            db.ref(".info/connected").on("value", (snap) => {
+                const dot = document.getElementById('conn-dot');
+                const txt = document.getElementById('conn-text');
+                if (snap.val() === true) {
+                    dot.className = "online-dot"; txt.innerText = "Connected";
+                    if (isDataInitialised) loadData();
+                    fetchAdminMetadata(); 
+                } else {
+                    dot.className = "offline-dot"; txt.innerText = "Offline (Retrying...)";
+                }
+            });
+        }
+
+        auth.onAuthStateChanged(user => { 
+            const loginScreen = document.getElementById('login-screen');
+            const mainContent = document.getElementById('main-content');
+            if (user) { 
+                loginScreen.style.display = 'none'; mainContent.style.display = 'flex'; mainContent.classList.remove('hidden');
+                if (!isDataInitialised) { monitorConnection(); loadData(); isDataInitialised = true; }
+            } else {
+                loginScreen.style.display = 'flex'; mainContent.style.display = 'none'; mainContent.classList.add('hidden');
+            }
+        });
+
+        function adminLogin() { 
+            const email = document.getElementById('admin-email').value;
+            const pass = document.getElementById('admin-pass').value;
+            if(!email || !pass) return alert("Enter credentials");
+            auth.signInWithEmailAndPassword(email, pass).catch(e => alert("Login Failed: " + e.message)); 
+        }
+
+        function logout() { if(confirm("Are you sure?")) auth.signOut().then(() => location.reload()); }
+
+        function unlockAudio() {
+            if (isAudioUnlocked) return;
+            const s = document.getElementById('order-sound');
+            s.play().then(() => { s.pause(); s.currentTime = 0; isAudioUnlocked = true; }).catch(e => console.error("Audio unlock failed", e));
+        }
+
+        function loadData() {
+            db.ref('appSettings').on('value', snap => {
+                const s = snap.val() || {};
+                globalAdminFee = parseFloat(s.adminDeliveryFee) || 0;
+                globalPerKmFee = parseFloat(s.perKmFee) || 0;
+                isAutoAssign = s.isAutoAssign || false;
+                isPrioritizationEnabled = s.isPrioritizationEnabled || false;
+                document.getElementById('master-switch').checked = s.isOpen;
+                document.getElementById('auto-assign-switch').checked = isAutoAssign;
+                document.getElementById('prioritization-switch').checked = isPrioritizationEnabled;
+                document.getElementById('input-admin-fee').value = globalAdminFee;
+                document.getElementById('input-per-km-fee').value = globalPerKmFee;
+                document.getElementById('input-notice-text').value = s.noticeText || "";
+            });
+
+            db.ref('riders').on('value', snap => { 
+                rawRiderData = snap.val() || {}; processRiders(); renderRiders();
+                if(mainMap) updateMapMarkers(); 
+            });
+
+            db.ref('restaurants').on('value', snap => { 
+                restaurantsData = snap.val() || {}; renderRestaurants(restaurantsData); 
+                db.ref('orders').on('value', snap => { 
+                    const data = snap.val() || {};
+                    const pendingOrders = Object.values(data).filter(o => o.status === 'PENDING');
+                    const currentPendingCount = pendingOrders.length;
+                    allOrders = data; renderOrders(); calculateStats(); 
+
+                    if (currentPendingCount > 0) {
+                        if (currentPendingCount > previousPendingCount) {
+                            alarmStoppedManually = false;
+                            const latest = pendingOrders[currentPendingCount-1];
+                            showNotification(`৳${latest.total || 0} এর নতুন অর্ডার`, Object.keys(data).pop());
+                        }
+                        if (!alarmStoppedManually) startAlarm();
+                        document.getElementById('order-badge').classList.remove('hidden');
+                        document.getElementById('inside-alert-box').classList.remove('hidden');
+                    } else {
+                        stopAlarm();
+                        document.getElementById('order-badge').classList.add('hidden');
+                        document.getElementById('inside-alert-box').classList.add('hidden');
+                    }
+                    previousPendingCount = currentPendingCount;
+                    initialOrderLoad = false;
+                });
+            });
+
+            db.ref('users').on('value', snap => { if(snap.val()) { allCustomers = snap.val(); renderCustomers(); } });
+        }
+
+        function startAlarm() { 
+            const soundEnabled = document.getElementById('sound-toggle').checked;
+            document.getElementById('alarm-overlay').classList.remove('hidden'); 
+            const s = document.getElementById('order-sound');
+            if (soundEnabled && isAudioUnlocked) { s.play().catch(e => console.log("Play blocked")); }
+        }
+        
+        function stopAlarm() { 
+            document.getElementById('alarm-overlay').classList.add('hidden'); 
+            const s = document.getElementById('order-sound'); 
+            s.pause(); s.currentTime = 0; alarmStoppedManually = true; 
+        }
+
+        function toggleSoundMaster(checked) {
+            if (!checked) stopAlarm();
+            else if (isAudioUnlocked && previousPendingCount > 0) { alarmStoppedManually = false; startAlarm(); }
+        }
+
+        function showNotification(text, orderId) {
+            const bar = document.getElementById('in-app-notif');
+            document.getElementById('notif-text').innerText = text;
+            bar.classList.add('show');
+            bar.onclick = () => { showSection('orders'); viewOrder(orderId); closeNotification(); };
+            setTimeout(closeNotification, 6000);
+        }
+
+        function closeNotification() { document.getElementById('in-app-notif').classList.remove('show'); }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            if (!lat1 || !lon1 || !lat2 || !lon2) return 999;
+            const R = 6371; const dLat = (lat2 - lat1) * Math.PI / 180; const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            return parseFloat((R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))).toFixed(2)); 
+        }
+
+        function autoAssignClosest(orderId) {
+            const order = allOrders[orderId];
+            if (!order) return;
+            
+            // Priority: Closest to Pickup (Restaurant)
+            const resId = order.resId || order.restaurantId;
+            const res = restaurantsData[resId];
+            const targetLat = res ? res.lat : order.lat;
+            const targetLng = res ? res.lng : order.lng;
+
+            let bestRider = null; 
+            let bestScore = Infinity;
+
+            const riderLoad = {};
+            Object.values(allOrders).forEach(o => {
+                if (o.status === 'ASSIGNED' && o.riderId) {
+                    riderLoad[o.riderId] = (riderLoad[o.riderId] || 0) + 1;
+                }
+            });
+
+            Object.values(riderList).forEach(rider => {
+                if (rider.online === true && !rider.isBlocked) {
+                    const rLat = rider.lat || (rider.location ? rider.location.lat : null);
+                    const rLng = rider.lng || (rider.location ? rider.location.lng : null);
+                    
+                    if (rLat && rLng) {
+                        const dist = calculateDistance(targetLat, targetLng, rLat, rLng);
+                        const load = riderLoad[rider.id] || 0;
+                        let currentScore = dist;
+
+                        if (isPrioritizationEnabled) {
+                            currentScore = dist + (load * 2.5); 
+                        }
+
+                        if (currentScore < bestScore) { 
+                            bestScore = currentScore; 
+                            bestRider = rider; 
+                        }
+                    }
+                }
+            });
+
+            if (bestRider) {
+                db.ref(`orders/${orderId}`).update({ 
+                    riderId: bestRider.id, 
+                    riderName: bestRider.name, 
+                    status: 'ASSIGNED', 
+                    assignedAt: firebase.database.ServerValue.TIMESTAMP 
+                })
+                .then(() => { 
+                    alert(`Smart Assigned: ${bestRider.name} is ${bestScore.toFixed(1)}km from pickup.`); 
+                    closeOrderModal(); 
+                });
+            } else {
+                alert("No active riders found for auto-assignment.");
+            }
+        }
+
+        function renderCustomers() {
+            const container = document.getElementById('customers-table-body');
+            let html = "";
+            Object.entries(allCustomers).forEach(([uid, user]) => {
+                const isBlocked = user.isBlocked === true;
+                html += `<tr class="border-b text-sm"><td class="p-4 font-bold">${user.name || 'Unnamed'}</td><td class="p-4 font-medium">${user.phone || uid}</td><td class="p-4"><span class="px-2 py-1 rounded-lg text-[10px] font-black uppercase ${isBlocked ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">${isBlocked ? 'BLOCKED' : 'ACTIVE'}</span></td><td class="p-4 text-right flex justify-end gap-3"><button onclick="viewCustomer('${uid}')" class="text-blue-600 font-bold text-xs">View</button><button onclick="toggleBlockCustomer('${uid}', ${isBlocked})" class="font-bold text-xs ${isBlocked ? 'text-green-600' : 'text-red-600'}">${isBlocked ? 'Unblock' : 'Block'}</button></td></tr>`;
+            });
+            container.innerHTML = html || '<tr><td colspan="4" class="p-10 text-center">No Customers</td></tr>';
+        }
+
+        function toggleBlockCustomer(uid, currentStatus) { if(confirm("Change status?")) db.ref(`users/${uid}`).update({ isBlocked: !currentStatus }); }
+
+        function renderRiders() {
+            const container = document.getElementById('riders-table-body');
+            let html = "";
+            Object.values(riderList).forEach(rider => {
+                const isBlocked = rider.isBlocked === true;
+                html += `<tr class="border-b text-sm"><td class="p-4 font-bold">${rider.name}</td><td class="p-4">${rider.phone}</td><td class="p-4"><span class="px-2 py-1 rounded-lg text-[10px] font-black uppercase ${rider.online ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}">${rider.online ? 'ONLINE' : 'OFFLINE'}</span></td><td class="p-4 text-right flex justify-end gap-3"><button onclick="viewRider('${rider.id}')" class="text-blue-600 font-bold text-xs">View</button><button onclick="toggleBlockRider('${rider.id}', ${isBlocked})" class="font-bold text-xs ${isBlocked ? 'text-green-600' : 'text-red-600'}">${isBlocked ? 'Unblock' : 'Block'}</button></td></tr>`;
+            });
+            container.innerHTML = html || '<tr><td colspan="4" class="p-10 text-center">No riders.</td></tr>';
+        }
+
+        function toggleBlockRider(rid, currentStatus) { if(confirm("Change status?")) db.ref(`riders/${rid}`).update({ isBlocked: !currentStatus }); }
+
+        function renderOrders() {
+            const container = document.getElementById('orders-table-body');
+            let html = "";
+            Object.entries(allOrders).reverse().forEach(([id, order]) => {
+                if(currentOrderFilter !== "ALL" && order.status !== currentOrderFilter) return;
+                let statusColor = (order.status === 'DELIVERED') ? "bg-green-100 text-green-700" : (order.status === 'ASSIGNED' ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700");
+                html += `<tr class="border-b text-sm"><td class="p-4"><input type="checkbox" value="${id}" class="order-checkbox"></td><td class="p-4 font-bold">#${id.slice(-5).toUpperCase()}</td><td class="p-4 text-blue-600 font-bold">Distance</td><td class="p-4"><span class="px-2 py-1 rounded-lg text-[10px] font-black uppercase ${statusColor}">${order.status}</span></td><td class="p-4 text-right flex justify-end items-center gap-4"><button onclick="viewOrder('${id}')" class="text-blue-600 font-bold">View</button><button onclick="deleteOrder('${id}')" class="text-red-600"><i class="fas fa-trash-alt"></i></button></td></tr>`;
+            });
+            container.innerHTML = html;
+        }
+
+        function deleteOrder(id) { if(confirm("Delete order?")) db.ref(`orders/${id}`).remove(); }
+
+        function initMainMap() { 
+            if (!mainMap) { mainMap = L.map('map').setView([23.8103, 90.4125], 13); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mainMap); } 
+            setTimeout(() => { mainMap.invalidateSize(); updateMapMarkers(); }, 300); 
+        }
+
+        function updateMapMarkers() { 
+            if (!mainMap) return; 
+            Object.values(riderList).forEach(r => { 
+                const lat = r.lat || (r.location ? r.location.lat : null); const lng = r.lng || (r.location ? r.location.lng : null); 
+                if (lat && lng) { 
+                    if (riderMarkers[r.id]) riderMarkers[r.id].setLatLng([lat, lng]); 
+                    else { 
+                        const icon = L.divIcon({ className: 'custom-m', html: `<div class="rider-icon-div" style="background:${r.online ? '#ef4444' : '#9ca3af'}"><i class="fas fa-motorcycle"></i></div>`, iconSize: [34, 34] }); 
+                        riderMarkers[r.id] = L.marker([lat, lng], { icon: icon }).addTo(mainMap).bindPopup(`<b>${r.name}</b>`); 
+                    } 
+                } 
+            }); 
+        }
+
+        function showSection(id) { document.querySelectorAll('main section').forEach(s => s.classList.add('hidden-section')); document.getElementById('sec-' + id).classList.remove('hidden-section'); document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('sidebar-active')); document.getElementById('btn-' + id).classList.add('sidebar-active'); if (id === 'map') initMainMap(); }
+        function toggleAppStatus(o) { db.ref('appSettings').update({ isOpen: o }); }
+        function saveAppSetting(k, v) { db.ref('appSettings').update({ [k]: (k === 'adminDeliveryFee' || k === 'perKmFee' ? parseFloat(v) : v) }).then(() => alert("Saved!")); }
+        
+        function renderRestaurants(data) { 
+            const container = document.getElementById('restaurant-list-container'); 
+            let resArray = Object.entries(data).map(([id, res]) => ({ id, ...res }));
+            resArray.sort((a, b) => (parseInt(a.rank) || 999) - (parseInt(b.rank) || 999));
+
+            let html = '<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">'; 
+            let counter = 1;
+            resArray.forEach((res) => { 
+                const id = res.id;
+                const resOff = res.isOff === true;
+                html += `<div class="bg-white p-5 rounded-[1.8rem] border border-gray-100 flex flex-col gap-3 shadow-sm hover:shadow-md transition">
+                    <div class="flex justify-between items-start">
+                        <div class="flex items-center gap-3">
+                            <span class="bg-red-600 text-white w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black shadow-lg">${counter++}</span>
+                            <p class="font-black text-gray-800 text-lg leading-tight">${res.name}</p>
+                        </div>
+                        <label class="switch scale-[0.6] origin-right"><input type="checkbox" ${resOff ? '' : 'checked'} onchange="toggleRestaurantStatus('${id}', this.checked)"><span class="slider"></span></label>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 mt-1">
+                        <div class="bg-gray-50 p-3 rounded-2xl border border-gray-100">
+                            <label class="text-[9px] font-black text-gray-400 block mb-1 uppercase">Base Fee</label>
+                            <input type="number" id="charge-${id}" value="${res.deliveryCharge || 0}" class="w-full bg-white p-2 border rounded-xl font-black text-xs outline-none">
+                        </div>
+                        <div class="bg-gray-50 p-3 rounded-2xl border border-gray-100">
+                            <label class="text-[9px] font-black text-gray-400 block mb-1 uppercase">Display Rank</label>
+                            <input type="number" id="rank-${id}" value="${res.rank || 0}" placeholder="1" class="w-full bg-white p-2 border rounded-xl font-black text-xs outline-none">
+                        </div>
+                        <div class="bg-gray-50 p-3 rounded-2xl border border-gray-100">
+                            <label class="text-[9px] font-black text-gray-400 block mb-1 uppercase">Contact</label>
+                            <input type="text" id="phone-${id}" value="${res.phone || ''}" placeholder="017..." class="w-full bg-white p-2 border rounded-xl font-black text-xs outline-none">
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center mt-2 border-t pt-3">
+                        <button onclick="openMapPicker('${id}')" class="text-blue-600 text-[11px] font-black"><i class="fas fa-map-marker-alt mr-1"></i>SET LOCATION</button>
+                        <button onclick="updateRestaurantInfo('${id}')" class="bg-red-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black">SAVE CHANGES</button>
+                    </div>
+                </div>`; 
+            }); 
+            container.innerHTML = html + '</div>'; 
+        }
+
+        function toggleRestaurantStatus(id, online) { db.ref(`restaurants/${id}`).update({ isOff: !online }); }
+
+        function updateRestaurantInfo(id) { 
+            const charge = parseFloat(document.getElementById(`charge-${id}`).value) || 0;
+            const phone = document.getElementById(`phone-${id}`).value || "";
+            const rank = parseInt(document.getElementById(`rank-${id}`).value) || 0;
+            db.ref(`restaurants/${id}`).update({ 
+                deliveryCharge: charge, 
+                phone: phone,
+                rank: rank 
+            }).then(() => alert("Updated Successfully!")); 
+        }
+
+        function processRiders() { riderList = {}; Object.entries(rawRiderData).forEach(([k, v]) => { if (v.name) riderList[k] = { ...v, id: k }; }); }
+        function calculateStats() { let t = 0; Object.values(allOrders).forEach(o => { if(o.status === 'DELIVERED') t += parseFloat(o.total || 0); }); document.getElementById('stat-revenue').innerText = '৳ ' + t; document.getElementById('stat-orders').innerText = Object.keys(allOrders).length; }
+
+        function filterOrders(status, btn) { currentOrderFilter = status; document.querySelectorAll('.order-filter-btn').forEach(b => b.classList.remove('order-filter-active')); btn.classList.add('order-filter-active'); renderOrders(); }
+
+        function viewOrder(id) {
+            const order = allOrders[id]; if (!order) return;
+            const resId = order.resId || order.restaurantId;
+            const restaurant = restaurantsData[resId];
+            
+            // PRIORITY: Get live details from restaurantsData map
+            let restaurantName = order.restaurantName || order.resName || 'Unknown';
+            let restaurantPhone = 'N/A'; 
+
+            if (restaurant) {
+                restaurantName = restaurant.name || restaurantName;
+                restaurantPhone = restaurant.phone || 'N/A';
+            } else if (order.restaurantPhone || order.resPhone) {
+                restaurantPhone = order.restaurantPhone || order.resPhone;
+            }
+
+            const resLat = restaurant ? restaurant.lat : order.lat;
+            const resLng = restaurant ? restaurant.lng : order.lng;
+
+            // Real-Time Proximity Logic
+            let proximityRiders = [];
+            Object.values(riderList).forEach(r => { 
+                if(r.online) {
+                    const rLat = r.lat || (r.location ? r.location.lat : null);
+                    const rLng = r.lng || (r.location ? r.location.lng : null);
+                    const dist = calculateDistance(resLat, resLng, rLat, rLng);
+                    proximityRiders.push({ ...r, distToRes: dist });
+                }
+            });
+
+            proximityRiders.sort((a, b) => a.distToRes - b.distToRes);
+
+            let riderOptions = '<option value="">Select Proximity Rider</option>';
+            proximityRiders.forEach(r => { 
+                const isSelected = r.id === order.riderId ? 'selected' : '';
+                const distLabel = r.distToRes !== 999 ? `(${r.distToRes} km away)` : '';
+                riderOptions += `<option value="${r.id}" ${isSelected}>${r.name} ${distLabel}</option>`; 
+            });
+            
+            let currentRiderHtml = order.riderId ? 
+                `<div class="mb-3 p-3 bg-blue-100 border border-blue-200 rounded-xl text-blue-800 font-black text-xs text-center"><i class="fas fa-motorcycle mr-2"></i>ASSIGNED TO: ${order.riderName}</div>` :
+                `<div class="mb-3 p-3 bg-red-100 border border-red-200 rounded-xl text-red-700 font-black text-xs text-center uppercase">No Rider Assigned Yet</div>`;
+
+            let itemsHtml = (order.items && Array.isArray(order.items)) ? order.items.map(it => `<div class="flex justify-between w-full border-b border-dashed py-1 text-sm font-bold"><span>${it.name}</span><span>৳${it.price}</span></div>`).join('') : "<p class='text-xs text-red-500'>No items</p>";
+            
+            const htmlContent = `
+                <div class="space-y-6">
+                    <div class="bg-gray-50 p-6 rounded-[2rem] border border-gray-100">
+                        <p class="text-[11px] font-black text-gray-400 uppercase">Customer: ${order.customerName || 'No Name'}</p>
+                        <h4 class="text-2xl font-black text-red-600 mb-3">${order.customerPhone || 'No Phone'}</h4>
+                        <p class="text-[12px] font-bold text-gray-500">${order.address || 'Address N/A'}</p>
+                    </div>
+
+                    <div class="bg-orange-50 p-6 rounded-[2rem] border border-orange-100">
+                        <p class="text-[11px] font-black text-orange-400 uppercase">Restaurant Pickup</p>
+                        <h4 class="text-2xl font-black text-gray-800 mb-1">${restaurantName}</h4>
+                        <div class="mt-2">
+                            <a href="tel:${restaurantPhone}" class="text-3xl font-black text-green-600 flex items-center gap-2">
+                                <i class="fas fa-phone-alt text-lg"></i> ${restaurantPhone}
+                            </a>
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-50 p-6 rounded-[2rem] border border-gray-200 flex flex-col items-center">
+                        <p class="text-[11px] font-black text-gray-400 uppercase mb-2">PROXIMITY-BASED ASSIGNMENT</p>
+                        ${currentRiderHtml}
+                        <select id="rider-sel-${id}" class="w-full bg-white border-2 border-gray-200 p-4 rounded-2xl font-black text-sm mb-5">${riderOptions}</select>
+                        <div class="flex gap-3 w-full"><button onclick="assignRiderManual('${id}')" class="flex-1 bg-red-500 text-white py-4 rounded-[1.5rem] font-black text-xs uppercase shadow-lg">Manual Assign</button><button onclick="autoAssignClosest('${id}')" class="flex-1 bg-[#1e293b] text-white py-4 rounded-[1.5rem] font-black text-xs uppercase shadow-lg">Auto AI</button></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-[2rem] border border-gray-100">
+                        <div class="border-b border-dashed pb-4 mb-4">${itemsHtml}</div>
+                        <div class="flex justify-between items-center"><h5 class="text-xl font-black">TOTAL BILL</h5><h5 class="text-2xl font-black">৳${order.total || 0}</h5></div>
+                    </div>
+                </div>`;
+            document.getElementById('order-details-content').innerHTML = htmlContent;
+            document.getElementById('order-modal').classList.remove('hidden');
+        }
+
+        function assignRiderManual(orderId) {
+            const riderId = document.getElementById(`rider-sel-${orderId}`).value;
+            if(!riderId) return alert("Please select a rider first!");
+            const rider = riderList[riderId];
+            db.ref(`orders/${orderId}`).update({ 
+                riderId: riderId, 
+                riderName: rider.name, 
+                status: 'ASSIGNED', 
+                assignedAt: firebase.database.ServerValue.TIMESTAMP 
+            }).then(() => { 
+                alert(`Manually Assigned to ${rider.name}`); 
+                closeOrderModal(); 
+            });
+        }
+
+        function closeOrderModal() { document.getElementById('order-modal').classList.add('hidden'); }
+
+        function viewCustomer(uid) {
+            const user = allCustomers[uid]; if (!user) return;
+            document.getElementById('customer-details-content').innerHTML = `<div class="text-center mb-6"><div class="w-20 h-20 bg-blue-100 rounded-full mx-auto flex items-center justify-center text-3xl font-bold">${user.name ? user.name[0] : '?'}</div></div><p class="font-black">Name: ${user.name || 'N/A'}</p><p class="font-black">Phone: ${user.phone || 'N/A'}</p>`;
+            document.getElementById('customer-modal').classList.remove('hidden');
+        }
+
+        function closeCustomerModal() { document.getElementById('customer-modal').classList.add('hidden'); }
+
+        function viewRider(rid) {
+            const rider = riderList[rid]; if (!rider) return;
+            document.getElementById('rider-details-content').innerHTML = `<div class="text-center mb-6"><div class="w-20 h-20 bg-purple-100 rounded-full mx-auto flex items-center justify-center text-3xl font-bold">${rider.name ? rider.name[0] : '?'}</div></div><p class="font-black">Rider Name: ${rider.name}</p><p class="font-black">Phone: ${rider.phone}</p>`;
+            document.getElementById('rider-modal').classList.remove('hidden');
+        }
+
+        function closeRiderModal() { document.getElementById('rider-modal').classList.add('hidden'); }
+        function toggleSelectAll(checked) { document.querySelectorAll('.order-checkbox').forEach(cb => cb.checked = checked); }
+
+        function openMapPicker(id) {
+            currentResId = id; document.getElementById('map-picker-modal').classList.remove('hidden');
+            if (!pickerMap) {
+                pickerMap = L.map('picker-map').setView([23.8103, 90.4125], 13);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(pickerMap);
+                pickerMap.on('click', e => {
+                    const { lat, lng } = e.latlng;
+                    if (pickerMarker) pickerMarker.setLatLng([lat, lng]); else pickerMarker = L.marker([lat, lng]).addTo(pickerMap);
+                });
+            }
+            setTimeout(() => pickerMap.invalidateSize(), 300);
+        }
+
+        function closeMapPicker() { document.getElementById('map-picker-modal').classList.add('hidden'); }
+        function savePickedLocation() {
+            if (!pickerMarker || !currentResId) return alert("Select location");
+            const pos = pickerMarker.getLatLng();
+            db.ref(`restaurants/${currentResId}`).update({ lat: pos.lat, lng: pos.lng }).then(() => { alert("Saved!"); closeMapPicker(); });
+        }
+    </script>
+</body>
+</html>
