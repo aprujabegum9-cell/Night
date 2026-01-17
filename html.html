@@ -1,0 +1,27 @@
+<html>
+<head>
+  <!-- your existing head code -->
+</head>
+
+<body>
+
+  <!-- your admin panel -->
+
+  <button onclick="testNotification()">🔔 Test Notification</button>
+
+  <script>
+    function testNotification() {
+      if (Notification.permission !== "granted") {
+        alert("Notification permission not allowed");
+        return;
+      }
+      navigator.serviceWorker.ready.then(function(reg) {
+        reg.showNotification("TEST OK ✅", {
+          body: "Your service worker is working fine"
+        });
+      });
+    }
+  </script>
+
+</body>
+</html>
